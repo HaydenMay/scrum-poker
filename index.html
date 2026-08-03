@@ -92,6 +92,16 @@
       .timer-flash {
         animation: timer-flash 0.6s ease-in-out 3;
       }
+      @keyframes confetti-fall {
+        0% {
+          transform: translateY(0) rotate(0deg);
+          opacity: 0.9;
+        }
+        100% {
+          transform: translateY(100vh) rotate(360deg);
+          opacity: 0;
+        }
+      }
       .card {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -150,6 +160,7 @@
         roomRef: null,
         participants: {},
         timerEndsAt: null,
+        timerPausedRemaining: null,
       };
 
       function sanitizeRoom(room) {
@@ -172,7 +183,10 @@
 
       function saveSession(room, name, isHost) {
         try {
-          localStorage.setItem(SESSION_KEY, JSON.stringify({ room, name, isHost }));
+          localStorage.setItem(
+            SESSION_KEY,
+            JSON.stringify({ room, name, isHost }),
+          );
         } catch (e) {
           console.error("Couldn't save session:", e);
         }
@@ -235,7 +249,9 @@
         updateUrl(state.room);
 
         // Presence: mark this participant as in the room, and auto-remove on disconnect
-        const myParticipantRef = state.roomRef.child("participants/" + state.name);
+        const myParticipantRef = state.roomRef.child(
+          "participants/" + state.name,
+        );
         myParticipantRef.set(true);
         myParticipantRef.onDisconnect().remove();
 
@@ -244,12 +260,20 @@
           (snap) => {
             connectionStatus = "connected";
             const data = snap.val() || {};
+            const wasRevealed = state.revealed;
             state.votes = data.votes || {};
             state.revealed = !!data.revealed;
             state.myVote = state.votes[state.name] || null;
             state.participants = data.participants || {};
             state.timerEndsAt = data.timerEndsAt || null;
+            state.timerPausedRemaining =
+              data.timerPausedRemaining != null
+                ? data.timerPausedRemaining
+                : null;
             render();
+            if (!wasRevealed && state.revealed && isUnanimous(state.votes)) {
+              celebrate();
+            }
           },
           (err) => {
             connectionStatus = "error";
@@ -278,25 +302,84 @@
           roomRef: null,
           participants: {},
           timerEndsAt: null,
+          timerPausedRemaining: null,
         };
         render();
       }
 
+      function formatTime(ms) {
+        const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        return mins + ":" + String(secs).padStart(2, "0");
+      }
+
+      function isUnanimous(votes) {
+        const vals = Object.values(votes);
+        if (vals.length < 2) return false;
+        return vals.every((v) => v === vals[0]);
+      }
+
+      function celebrate() {
+        const colors = ["#5b8def", "#9dc0ff", "#f0f0f0", "#a0a0a0"];
+        const container = document.createElement("div");
+        container.style.cssText =
+          "position:fixed; inset:0; pointer-events:none; z-index:9999; overflow:hidden;";
+        document.body.appendChild(container);
+
+        for (let i = 0; i < 60; i++) {
+          const piece = document.createElement("div");
+          const size = 6 + Math.random() * 6;
+          const left = Math.random() * 100;
+          const duration = 1.6 + Math.random() * 1.2;
+          const delay = Math.random() * 0.3;
+          const color = colors[Math.floor(Math.random() * colors.length)];
+          const rotate = Math.random() * 360;
+          piece.style.cssText = `
+            position:absolute; top:-20px; left:${left}vw;
+            width:${size}px; height:${size * 0.6}px;
+            background:${color}; opacity:0.9;
+            transform: rotate(${rotate}deg);
+            animation: confetti-fall ${duration}s ease-in ${delay}s forwards;
+          `;
+          container.appendChild(piece);
+        }
+
+        setTimeout(() => {
+          container.remove();
+        }, 3200);
+      }
+
       function castVote(val) {
+        if (state.revealed) return;
         state.myVote = val;
         state.roomRef.child("votes/" + state.name).set(val);
       }
 
       function revealVotes() {
-        state.roomRef.child("revealed").set(true);
+        const updates = { revealed: true };
+        if (state.timerEndsAt) {
+          const remainingMs = Math.max(0, state.timerEndsAt - Date.now());
+          updates.timerEndsAt = null;
+          updates.timerPausedRemaining = remainingMs;
+        }
+        state.roomRef.update(updates);
       }
 
       function resetRound() {
-        state.roomRef.update({ votes: {}, revealed: false, timerEndsAt: null });
+        state.roomRef.update({
+          votes: {},
+          revealed: false,
+          timerEndsAt: null,
+          timerPausedRemaining: null,
+        });
       }
 
       function startTimer() {
-        state.roomRef.child("timerEndsAt").set(Date.now() + 60 * 1000);
+        state.roomRef.update({
+          timerEndsAt: Date.now() + 60 * 1000,
+          timerPausedRemaining: null,
+        });
       }
 
       function avg() {
@@ -404,7 +487,8 @@
         <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Still voting</p>
         ${waitingOn
           .map(
-            (name) => `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
+            (name) =>
+              `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
           )
           .join("")}
       </div>`
@@ -412,11 +496,16 @@
 
         const timerHtml = state.timerEndsAt
           ? `<div id="timer-display" style="text-align:center; font-size:28px; font-weight:600; margin-bottom:12px; font-variant-numeric: tabular-nums;">1:00</div>`
-          : "";
+          : state.timerPausedRemaining != null
+            ? `<div style="text-align:center; margin-bottom:12px;">
+        <div style="font-size:28px; font-weight:600; font-variant-numeric: tabular-nums; color: var(--text-secondary);">${formatTime(state.timerPausedRemaining)}</div>
+        <div style="font-size:12px; color: var(--text-secondary);">Paused</div>
+      </div>`
+            : "";
 
         const deckHtml = DECK.map((v) => {
           const selected = state.myVote === v;
-          return `<button data-val="${v}" class="card-btn" style="
+          return `<button data-val="${v}" class="card-btn" ${state.revealed ? "disabled" : ""} style="
       width:56px; height:76px; font-size:18px; font-weight:600; border-radius:10px;
       border:${selected ? "2px solid var(--accent)" : "1px solid var(--border)"};
       background:${selected ? "var(--accent-bg)" : "var(--surface-2)"};
@@ -436,13 +525,19 @@
               .join("")
           : `<p style="font-size:13px; color:var(--text-secondary); margin:0;">No one's voted yet.</p>`;
 
-        const avgHtml =
-          state.revealed && avg() !== null
-            ? `<div style="background:var(--surface-2); border-radius:10px; padding:1rem; margin-top:16px; text-align:center;">
+        const avgHtml = state.revealed
+          ? isUnanimous(state.votes)
+            ? `<div style="background: var(--accent-bg); border-radius:10px; padding:1rem; margin-top:16px; text-align:center;">
+        <p style="font-size:13px; color:#9dc0ff; margin:0 0 4px;">Unanimous</p>
+        <p style="font-size:24px; font-weight:600; margin:0; color:#9dc0ff;">Everyone said ${Object.values(state.votes)[0]}</p>
+      </div>`
+            : avg() !== null
+              ? `<div style="background:var(--surface-2); border-radius:10px; padding:1rem; margin-top:16px; text-align:center;">
         <p class="label" style="margin-bottom:4px;">Average</p>
         <p style="font-size:24px; font-weight:600; margin:0;">${avg()}</p>
       </div>`
-            : "";
+              : ""
+          : "";
 
         const statusBanner =
           connectionStatus === "error"
@@ -479,7 +574,7 @@
     </div>
 
     ${
-      state.isHost && !state.timerEndsAt
+      state.isHost && !state.timerEndsAt && state.timerPausedRemaining == null
         ? `<div style="text-align:center; margin-bottom:20px;">
       <button id="start-timer-btn" style="font-size:13px; padding:6px 12px;">Start 1 min timer</button>
     </div>`
@@ -549,10 +644,7 @@
               clearInterval(window.__timerInterval);
               return;
             }
-            const totalSeconds = Math.ceil(remainingMs / 1000);
-            const mins = Math.floor(totalSeconds / 60);
-            const secs = totalSeconds % 60;
-            el.textContent = mins + ":" + String(secs).padStart(2, "0");
+            el.textContent = formatTime(remainingMs);
           };
           tick();
           window.__timerInterval = setInterval(tick, 250);
@@ -562,15 +654,29 @@
       const urlRoomOnLoad = getRoomFromUrl();
       const savedSession = loadSession();
 
-      if (urlRoomOnLoad && savedSession && savedSession.room === urlRoomOnLoad) {
+      if (
+        urlRoomOnLoad &&
+        savedSession &&
+        savedSession.room === urlRoomOnLoad
+      ) {
         // Same room in URL and saved session — reconnect with known name/host status
-        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
+        joinRoom(
+          savedSession.room,
+          savedSession.name,
+          savedSession.isHost,
+          false,
+        );
       } else if (urlRoomOnLoad) {
         // URL has a room but no matching session — show name entry for that room
         render();
       } else if (savedSession && savedSession.room && savedSession.name) {
         // No URL room, fall back to saved session
-        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
+        joinRoom(
+          savedSession.room,
+          savedSession.name,
+          savedSession.isHost,
+          false,
+        );
       } else {
         render();
       }
