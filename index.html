@@ -244,7 +244,7 @@
         state.roomRef.child("revealed").set(true);
       }
 
-      function clearVotes() {
+      function resetRound() {
         state.roomRef.set({ votes: {}, revealed: false });
       }
 
@@ -414,16 +414,28 @@
     </div>
 
     <div style="display:flex; gap:8px;">
-      <button id="reveal-btn" style="flex:1;">Reveal</button>
-      <button id="clear-btn" style="flex:1;">New round</button>
+      ${
+        state.revealed
+          ? `<button id="new-round-btn" style="flex:1;">New round</button>`
+          : `<button id="reveal-btn" style="flex:1;">Reveal</button>`
+      }
+      <button id="delete-btn" style="flex:1; color: var(--text-secondary); font-size:13px;">Delete estimates</button>
     </div>
   `;
 
         document.querySelectorAll(".card-btn").forEach((btn) => {
           btn.onclick = () => castVote(btn.dataset.val);
         });
-        document.getElementById("reveal-btn").onclick = revealVotes;
-        document.getElementById("clear-btn").onclick = clearVotes;
+        if (state.revealed) {
+          document.getElementById("new-round-btn").onclick = resetRound;
+        } else {
+          document.getElementById("reveal-btn").onclick = revealVotes;
+        }
+        document.getElementById("delete-btn").onclick = () => {
+          if (confirm("Delete all estimates for this round?")) {
+            resetRound();
+          }
+        };
         document.getElementById("copy-btn").onclick = () => {
           navigator.clipboard.writeText(window.location.href).then(() => {
             const btn = document.getElementById("copy-btn");
