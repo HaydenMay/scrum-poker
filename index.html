@@ -59,6 +59,17 @@
       button:active {
         transform: scale(0.98);
       }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      button:disabled:hover {
+        background: var(--surface-2);
+        border-color: var(--border);
+      }
+      button:disabled:active {
+        transform: none;
+      }
       .card {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -417,7 +428,7 @@
       ${
         state.revealed
           ? `<button id="new-round-btn" style="flex:1;">New round</button>`
-          : `<button id="reveal-btn" style="flex:1;">Reveal</button>`
+          : `<button id="reveal-btn" style="flex:1;" ${submitted.length === 0 ? "disabled" : ""}>Reveal</button>`
       }
       <button id="delete-btn" style="flex:1; color: var(--text-secondary); font-size:13px;">Delete estimates</button>
     </div>
@@ -428,7 +439,7 @@
         });
         if (state.revealed) {
           document.getElementById("new-round-btn").onclick = resetRound;
-        } else {
+        } else if (submitted.length > 0) {
           document.getElementById("reveal-btn").onclick = revealVotes;
         }
         document.getElementById("delete-btn").onclick = () => {
