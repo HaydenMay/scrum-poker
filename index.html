@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scrum Poker</title>
+    <style>
+      :root {
+        --bg: #1a1a1a;
+        --surface: #242424;
+        --surface-2: #2e2e2e;
+        --border: #3a3a3a;
+        --text: #f0f0f0;
+        --text-secondary: #a0a0a0;
+        --accent: #5b8def;
+        --accent-bg: #223452;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 2rem 1rem;
+        display: flex;
+        justify-content: center;
+      }
+      #app {
+        width: 100%;
+        max-width: 480px;
+      }
+      input,
+      button {
+        font-family: inherit;
+        font-size: 15px;
+      }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+      }
+      button {
+        padding: 10px 12px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--surface);
+        border-color: #555;
+      }
+      button:active {
+        transform: scale(0.98);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.5rem;
+      }
+      .label {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin: 0 0 4px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+    <script>
+      /* ====================================================================
+   FIREBASE CONFIG — replace with your own project's config.
+   Get this from: Firebase console > Project settings > Your apps > SDK setup
+   Free tier (Spark plan) is plenty for this.
+   ==================================================================== */
+      const firebaseConfig = {
+        apiKey: "AIzaSyBLRkE7g6Val6brolT7JbxtuXYDTMT-TAI",
+        authDomain: "scrum-poker-46f29.firebaseapp.com",
+        projectId: "scrum-poker-46f29",
+        storageBucket: "scrum-poker-46f29.firebasestorage.app",
+        messagingSenderId: "59363323998",
+        appId: "1:59363323998:web:3813a1d1e404b17ba084cf",
+        measurementId: "G-G4VN20JMQG",
+      };
+
+      // Initialize Firebase
+      firebase.initializeApp(firebaseConfig);
+      const db = firebase.database();
+
+      const DECK = [".5", "1", "2", "3", "5", "8", "13", "?"];
+
+      let state = {
+        screen: "join",
+        room: "",
+        name: "",
+        myVote: null,
+        votes: {},
+        revealed: false,
+        roomRef: null,
+      };
+
+      function sanitizeRoom(room) {
+        return room
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, "-");
+      }
+
+      function generateRoomCode() {
+        const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0/I/1 ambiguity
+        let code = "";
+        for (let i = 0; i < 4; i++) {
+          code += chars[Math.floor(Math.random() * chars.length)];
+        }
+        return code;
+      }
+
+      let connectionStatus = "checking"; // checking | connected | error
+
+      function joinRoom(room, name, isHost) {
+        state.room = sanitizeRoom(room).toUpperCase();
+        state.name = name.trim();
+        state.myVote = null;
+        state.isHost = !!isHost;
+        state.screen = "room";
+
+        if (state.roomRef) state.roomRef.off();
+        state.roomRef = db.ref("rooms/" + state.room);
+
+        if (isHost) {
+          state.roomRef.set({
+            votes: {},
+            revealed: false,
+            createdAt: Date.now(),
+          });
+        }
+
+        state.roomRef.on(
+          "value",
+          (snap) => {
+            connectionStatus = "connected";
+            const data = snap.val() || {};
+            state.votes = data.votes || {};
+            state.revealed = !!data.revealed;
+            state.myVote = state.votes[state.name] || null;
+            render();
+          },
+          (err) => {
+            connectionStatus = "error";
+            console.error("Firebase error:", err);
+            render();
+          },
+        );
+
+        render();
+      }
+
+      function castVote(val) {
+        state.myVote = val;
+        state.roomRef.child("votes/" + state.name).set(val);
+      }
+
+      function revealVotes() {
+        state.roomRef.child("revealed").set(true);
+      }
+
+      function clearVotes() {
+        state.roomRef.set({ votes: {}, revealed: false });
+      }
+
+      function avg() {
+        const nums = Object.values(state.votes)
+          .map((v) => parseFloat(v))
+          .filter((v) => !isNaN(v));
+        if (!nums.length) return null;
+        return (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1);
+      }
+
+      function render() {
+        const app = document.getElementById("app");
+
+        if (state.screen === "join") {
+          app.innerHTML = `
+      <div class="card" style="margin-bottom: 12px;">
+        <p style="font-weight:600; font-size:18px; margin:0 0 4px;">Start a new session</p>
+        <p style="font-size:13px; color:var(--text-secondary); margin:0 0 20px;">
+          Generates a room code you can share with your team.
+        </p>
+        <p class="label">Your name</p>
+        <input id="host-name-input" placeholder="Your Name Here" style="margin-bottom:20px;" />
+        <button id="create-btn" style="width:100%; font-weight:600;">Create room</button>
+      </div>
+
+      <p style="text-align:center; margin:16px 0; color:var(--text-secondary); font-size:13px;">OR</p>
+
+      <div class="card">
+        <p style="font-weight:600; font-size:18px; margin:0 0 4px;">Join a session</p>
+        <p style="font-size:13px; color:var(--text-secondary); margin:0 0 20px;">
+          Got a room code from someone? Enter it here.
+        </p>
+        <p class="label">Room code</p>
+        <input id="room-input" placeholder="7XQ2" style="margin-bottom:16px; text-transform: uppercase;" />
+        <p class="label">Your name</p>
+        <input id="name-input" placeholder="Your Name Here" style="margin-bottom:20px;" />
+        <button id="join-btn" style="width:100%; font-weight:600;">Join room</button>
+      </div>
+    `;
+          const hostNameInput = document.getElementById("host-name-input");
+          const roomInput = document.getElementById("room-input");
+          const nameInput = document.getElementById("name-input");
+
+          const tryCreate = () => {
+            if (hostNameInput.value.trim()) {
+              joinRoom(generateRoomCode(), hostNameInput.value, true);
+            }
+          };
+          document.getElementById("create-btn").onclick = tryCreate;
+          hostNameInput.onkeydown = (e) => {
+            if (e.key === "Enter") tryCreate();
+          };
+
+          const tryJoin = () => {
+            if (roomInput.value.trim() && nameInput.value.trim()) {
+              joinRoom(roomInput.value, nameInput.value, false);
+            }
+          };
+          document.getElementById("join-btn").onclick = tryJoin;
+          nameInput.onkeydown = (e) => {
+            if (e.key === "Enter") tryJoin();
+          };
+          return;
+        }
+
+        const submitted = Object.keys(state.votes);
+
+        const deckHtml = DECK.map((v) => {
+          const selected = state.myVote === v;
+          return `<button data-val="${v}" class="card-btn" style="
+      width:56px; height:76px; font-size:18px; font-weight:600; border-radius:10px;
+      border:${selected ? "2px solid var(--accent)" : "1px solid var(--border)"};
+      background:${selected ? "var(--accent-bg)" : "var(--surface-2)"};
+      color:${selected ? "#9dc0ff" : "var(--text)"};
+    ">${v}</button>`;
+        }).join("");
+
+        const votesHtml = submitted.length
+          ? submitted
+              .map((name) => {
+                const val = state.votes[name];
+                return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border);">
+          <span style="font-size:14px;">${name}${name === state.name ? " (you)" : ""}</span>
+          <span style="font-size:14px; font-weight:600;">${state.revealed ? val : "✓"}</span>
+        </div>`;
+              })
+              .join("")
+          : `<p style="font-size:13px; color:var(--text-secondary); margin:0;">No one's voted yet.</p>`;
+
+        const avgHtml =
+          state.revealed && avg() !== null
+            ? `<div style="background:var(--surface-2); border-radius:10px; padding:1rem; margin-top:16px; text-align:center;">
+        <p class="label" style="margin-bottom:4px;">Average</p>
+        <p style="font-size:24px; font-weight:600; margin:0;">${avg()}</p>
+      </div>`
+            : "";
+
+        const statusBanner =
+          connectionStatus === "error"
+            ? `<div style="background:#4a1e1e; border:1px solid #7a2e2e; border-radius:8px; padding:10px 12px; margin-bottom:16px; font-size:13px; color:#ff9d9d;">
+                Can't reach the database. Check your Firebase config and rules.
+              </div>`
+            : connectionStatus === "checking"
+              ? `<div style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:16px; font-size:13px; color:var(--text-secondary);">
+                Connecting…
+              </div>`
+              : "";
+
+        app.innerHTML = `
+    ${statusBanner}
+    <div class="row" style="margin-bottom:16px;">
+      <div>
+        <p class="label" style="margin:0;">Room code${state.isHost ? " (share this)" : ""}</p>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <p style="font-weight:600; font-size:20px; margin:0; letter-spacing: 1px;">${state.room}</p>
+          <button id="copy-btn" style="padding:4px 8px; font-size:12px;">Copy</button>
+        </div>
+      </div>
+      <span style="font-size:13px; color:var(--text-secondary);">${state.name}</span>
+    </div>
+
+    <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:20px;">
+      ${deckHtml}
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Votes (${submitted.length})</p>
+      ${votesHtml}
+      ${avgHtml}
+    </div>
+
+    <div style="display:flex; gap:8px;">
+      <button id="reveal-btn" style="flex:1;">Reveal</button>
+      <button id="clear-btn" style="flex:1;">New round</button>
+    </div>
+  `;
+
+        document.querySelectorAll(".card-btn").forEach((btn) => {
+          btn.onclick = () => castVote(btn.dataset.val);
+        });
+        document.getElementById("reveal-btn").onclick = revealVotes;
+        document.getElementById("clear-btn").onclick = clearVotes;
+        document.getElementById("copy-btn").onclick = () => {
+          navigator.clipboard.writeText(state.room).then(() => {
+            const btn = document.getElementById("copy-btn");
+            btn.textContent = "Copied";
+            setTimeout(() => {
+              btn.textContent = "Copy";
+            }, 1500);
+          });
+        };
+      }
+
+      render();
+    </script>
+  </body>
+</html>
