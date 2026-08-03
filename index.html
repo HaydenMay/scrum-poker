@@ -98,7 +98,7 @@
         messagingSenderId: "59363323998",
         appId: "1:59363323998:web:3813a1d1e404b17ba084cf",
         measurementId: "G-G4VN20JMQG",
-        databaseURL: "https://scrum-poker-46f29-default-rtdb.firebaseio.com"
+        databaseURL: "https://scrum-poker-46f29-default-rtdb.firebaseio.com",
       };
 
       // Initialize Firebase
@@ -133,9 +133,37 @@
         return code;
       }
 
+      const SESSION_KEY = "scrum-poker-session";
+
+      function saveSession(room, name, isHost) {
+        try {
+          localStorage.setItem(
+            SESSION_KEY,
+            JSON.stringify({ room, name, isHost }),
+          );
+        } catch (e) {
+          console.error("Couldn't save session:", e);
+        }
+      }
+
+      function loadSession() {
+        try {
+          const raw = localStorage.getItem(SESSION_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function clearSession() {
+        try {
+          localStorage.removeItem(SESSION_KEY);
+        } catch (e) {}
+      }
+
       let connectionStatus = "checking"; // checking | connected | error
 
-      function joinRoom(room, name, isHost) {
+      function joinRoom(room, name, isHost, isNewRoom) {
         state.room = sanitizeRoom(room).toUpperCase();
         state.name = name.trim();
         state.myVote = null;
@@ -145,13 +173,15 @@
         if (state.roomRef) state.roomRef.off();
         state.roomRef = db.ref("rooms/" + state.room);
 
-        if (isHost) {
+        if (isNewRoom) {
           state.roomRef.set({
             votes: {},
             revealed: false,
             createdAt: Date.now(),
           });
         }
+
+        saveSession(state.room, state.name, state.isHost);
 
         state.roomRef.on(
           "value",
@@ -170,6 +200,21 @@
           },
         );
 
+        render();
+      }
+
+      function leaveRoom() {
+        if (state.roomRef) state.roomRef.off();
+        clearSession();
+        state = {
+          screen: "join",
+          room: "",
+          name: "",
+          myVote: null,
+          votes: {},
+          revealed: false,
+          roomRef: null,
+        };
         render();
       }
 
@@ -229,7 +274,7 @@
 
           const tryCreate = () => {
             if (hostNameInput.value.trim()) {
-              joinRoom(generateRoomCode(), hostNameInput.value, true);
+              joinRoom(generateRoomCode(), hostNameInput.value, true, true);
             }
           };
           document.getElementById("create-btn").onclick = tryCreate;
@@ -239,7 +284,7 @@
 
           const tryJoin = () => {
             if (roomInput.value.trim() && nameInput.value.trim()) {
-              joinRoom(roomInput.value, nameInput.value, false);
+              joinRoom(roomInput.value, nameInput.value, false, false);
             }
           };
           document.getElementById("join-btn").onclick = tryJoin;
@@ -305,6 +350,10 @@
       <span style="font-size:13px; color:var(--text-secondary);">${state.name}</span>
     </div>
 
+    <div style="text-align:right; margin-bottom:8px;">
+      <button id="leave-btn" style="padding:4px 8px; font-size:12px;">Leave room</button>
+    </div>
+
     <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:20px;">
       ${deckHtml}
     </div>
@@ -335,9 +384,20 @@
             }, 1500);
           });
         };
+        document.getElementById("leave-btn").onclick = leaveRoom;
       }
 
-      render();
+      const savedSession = loadSession();
+      if (savedSession && savedSession.room && savedSession.name) {
+        joinRoom(
+          savedSession.room,
+          savedSession.name,
+          savedSession.isHost,
+          false,
+        );
+      } else {
+        render();
+      }
     </script>
   </body>
 </html>
