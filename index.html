@@ -31,6 +31,16 @@
         width: 100%;
         max-width: 480px;
       }
+      .still-voting-panel {
+        width: 160px;
+      }
+      @media (min-width: 900px) {
+        .still-voting-panel {
+          position: fixed;
+          top: 2rem;
+          left: calc(50% + 260px);
+        }
+      }
       input,
       button {
         font-family: inherit;
@@ -69,6 +79,18 @@
       }
       button:disabled:active {
         transform: none;
+      }
+      @keyframes timer-flash {
+        0%,
+        100% {
+          color: var(--text);
+        }
+        50% {
+          color: #e2504f;
+        }
+      }
+      .timer-flash {
+        animation: timer-flash 0.6s ease-in-out 3;
       }
       .card {
         background: var(--surface);
@@ -126,6 +148,8 @@
         votes: {},
         revealed: false,
         roomRef: null,
+        participants: {},
+        timerEndsAt: null,
       };
 
       function sanitizeRoom(room) {
@@ -210,6 +234,11 @@
         saveSession(state.room, state.name, state.isHost);
         updateUrl(state.room);
 
+        // Presence: mark this participant as in the room, and auto-remove on disconnect
+        const myParticipantRef = state.roomRef.child("participants/" + state.name);
+        myParticipantRef.set(true);
+        myParticipantRef.onDisconnect().remove();
+
         state.roomRef.on(
           "value",
           (snap) => {
@@ -218,6 +247,8 @@
             state.votes = data.votes || {};
             state.revealed = !!data.revealed;
             state.myVote = state.votes[state.name] || null;
+            state.participants = data.participants || {};
+            state.timerEndsAt = data.timerEndsAt || null;
             render();
           },
           (err) => {
@@ -231,7 +262,10 @@
       }
 
       function leaveRoom() {
-        if (state.roomRef) state.roomRef.off();
+        if (state.roomRef) {
+          state.roomRef.child("participants/" + state.name).remove();
+          state.roomRef.off();
+        }
         clearSession();
         clearUrl();
         state = {
@@ -242,6 +276,8 @@
           votes: {},
           revealed: false,
           roomRef: null,
+          participants: {},
+          timerEndsAt: null,
         };
         render();
       }
@@ -256,7 +292,11 @@
       }
 
       function resetRound() {
-        state.roomRef.set({ votes: {}, revealed: false });
+        state.roomRef.update({ votes: {}, revealed: false, timerEndsAt: null });
+      }
+
+      function startTimer() {
+        state.roomRef.child("timerEndsAt").set(Date.now() + 60 * 1000);
       }
 
       function avg() {
@@ -355,6 +395,24 @@
         }
 
         const submitted = Object.keys(state.votes);
+        const allParticipants = Object.keys(state.participants);
+        const waitingOn = allParticipants.filter((n) => !submitted.includes(n));
+
+        const waitingHtml =
+          !state.revealed && waitingOn.length
+            ? `<div class="card still-voting-panel">
+        <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Still voting</p>
+        ${waitingOn
+          .map(
+            (name) => `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
+          )
+          .join("")}
+      </div>`
+            : "";
+
+        const timerHtml = state.timerEndsAt
+          ? `<div id="timer-display" style="text-align:center; font-size:28px; font-weight:600; margin-bottom:12px; font-variant-numeric: tabular-nums;">1:00</div>`
+          : "";
 
         const deckHtml = DECK.map((v) => {
           const selected = state.myVote === v;
@@ -414,15 +472,27 @@
       <button id="leave-btn" style="padding:4px 8px; font-size:12px;">Leave room</button>
     </div>
 
+    ${timerHtml}
+
     <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:20px;">
       ${deckHtml}
     </div>
+
+    ${
+      state.isHost && !state.timerEndsAt
+        ? `<div style="text-align:center; margin-bottom:20px;">
+      <button id="start-timer-btn" style="font-size:13px; padding:6px 12px;">Start 1 min timer</button>
+    </div>`
+        : ""
+    }
 
     <div class="card" style="margin-bottom:16px;">
       <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Votes (${submitted.length})</p>
       ${votesHtml}
       ${avgHtml}
     </div>
+
+    ${waitingHtml}
 
     <div style="display:flex; gap:8px;">
       ${
@@ -437,6 +507,9 @@
         document.querySelectorAll(".card-btn").forEach((btn) => {
           btn.onclick = () => castVote(btn.dataset.val);
         });
+        if (state.isHost && document.getElementById("start-timer-btn")) {
+          document.getElementById("start-timer-btn").onclick = startTimer;
+        }
         if (state.revealed) {
           document.getElementById("new-round-btn").onclick = resetRound;
         } else if (submitted.length > 0) {
@@ -457,6 +530,33 @@
           });
         };
         document.getElementById("leave-btn").onclick = leaveRoom;
+
+        if (window.__timerInterval) {
+          clearInterval(window.__timerInterval);
+          window.__timerInterval = null;
+        }
+        if (state.timerEndsAt) {
+          const tick = () => {
+            const el = document.getElementById("timer-display");
+            if (!el) {
+              clearInterval(window.__timerInterval);
+              return;
+            }
+            const remainingMs = state.timerEndsAt - Date.now();
+            if (remainingMs <= 0) {
+              el.textContent = "0:00";
+              el.classList.add("timer-flash");
+              clearInterval(window.__timerInterval);
+              return;
+            }
+            const totalSeconds = Math.ceil(remainingMs / 1000);
+            const mins = Math.floor(totalSeconds / 60);
+            const secs = totalSeconds % 60;
+            el.textContent = mins + ":" + String(secs).padStart(2, "0");
+          };
+          tick();
+          window.__timerInterval = setInterval(tick, 250);
+        }
       }
 
       const urlRoomOnLoad = getRoomFromUrl();
