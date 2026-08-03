@@ -83,6 +83,7 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
     <script>
       /* ====================================================================
    FIREBASE CONFIG — replace with your own project's config.
@@ -90,7 +91,7 @@
    Free tier (Spark plan) is plenty for this.
    ==================================================================== */
       const firebaseConfig = {
-        apiKey: "AIzaSyBLRkE7g6Val6brolT7JbxtuXYDTMT-TAI",
+        apiKey: "",
         authDomain: "scrum-poker-46f29.firebaseapp.com",
         projectId: "scrum-poker-46f29",
         storageBucket: "scrum-poker-46f29.firebasestorage.app",
@@ -136,10 +137,7 @@
 
       function saveSession(room, name, isHost) {
         try {
-          localStorage.setItem(
-            SESSION_KEY,
-            JSON.stringify({ room, name, isHost }),
-          );
+          localStorage.setItem(SESSION_KEY, JSON.stringify({ room, name, isHost }));
         } catch (e) {
           console.error("Couldn't save session:", e);
         }
@@ -158,6 +156,24 @@
         try {
           localStorage.removeItem(SESSION_KEY);
         } catch (e) {}
+      }
+
+      function getRoomFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const room = params.get("room");
+        return room ? sanitizeRoom(room).toUpperCase() : null;
+      }
+
+      function updateUrl(room) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("room", room);
+        window.history.replaceState({}, "", url);
+      }
+
+      function clearUrl() {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("room");
+        window.history.replaceState({}, "", url);
       }
 
       let connectionStatus = "checking"; // checking | connected | error
@@ -181,6 +197,7 @@
         }
 
         saveSession(state.room, state.name, state.isHost);
+        updateUrl(state.room);
 
         state.roomRef.on(
           "value",
@@ -205,6 +222,7 @@
       function leaveRoom() {
         if (state.roomRef) state.roomRef.off();
         clearSession();
+        clearUrl();
         state = {
           screen: "join",
           room: "",
@@ -242,6 +260,38 @@
         const app = document.getElementById("app");
 
         if (state.screen === "join") {
+          const urlRoom = getRoomFromUrl();
+
+          if (urlRoom) {
+            app.innerHTML = `
+      <div class="card">
+        <p style="font-weight:600; font-size:18px; margin:0 0 4px;">Join room ${urlRoom}</p>
+        <p style="font-size:13px; color:var(--text-secondary); margin:0 0 20px;">
+          Enter your name to jump in.
+        </p>
+        <p class="label">Your name</p>
+        <input id="name-input" placeholder="Your Name Here" style="margin-bottom:20px;" />
+        <button id="join-btn" style="width:100%; font-weight:600;">Join room</button>
+        <button id="different-room-btn" style="width:100%; margin-top:8px; font-size:13px;">Not your room? Enter a different code</button>
+      </div>
+    `;
+            const nameInput = document.getElementById("name-input");
+            const tryJoin = () => {
+              if (nameInput.value.trim()) {
+                joinRoom(urlRoom, nameInput.value, false, false);
+              }
+            };
+            document.getElementById("join-btn").onclick = tryJoin;
+            nameInput.onkeydown = (e) => {
+              if (e.key === "Enter") tryJoin();
+            };
+            document.getElementById("different-room-btn").onclick = () => {
+              clearUrl();
+              render();
+            };
+            return;
+          }
+
           app.innerHTML = `
       <div class="card" style="margin-bottom: 12px;">
         <p style="font-weight:600; font-size:18px; margin:0 0 4px;">Start a new session</p>
@@ -343,7 +393,7 @@
         <p class="label" style="margin:0;">Room code${state.isHost ? " (share this)" : ""}</p>
         <div style="display:flex; align-items:center; gap:8px;">
           <p style="font-weight:600; font-size:20px; margin:0; letter-spacing: 1px;">${state.room}</p>
-          <button id="copy-btn" style="padding:4px 8px; font-size:12px;">Copy</button>
+          <button id="copy-btn" style="padding:4px 8px; font-size:12px;">Copy link</button>
         </div>
       </div>
       <span style="font-size:13px; color:var(--text-secondary);">${state.name}</span>
@@ -375,25 +425,29 @@
         document.getElementById("reveal-btn").onclick = revealVotes;
         document.getElementById("clear-btn").onclick = clearVotes;
         document.getElementById("copy-btn").onclick = () => {
-          navigator.clipboard.writeText(state.room).then(() => {
+          navigator.clipboard.writeText(window.location.href).then(() => {
             const btn = document.getElementById("copy-btn");
             btn.textContent = "Copied";
             setTimeout(() => {
-              btn.textContent = "Copy";
+              btn.textContent = "Copy link";
             }, 1500);
           });
         };
         document.getElementById("leave-btn").onclick = leaveRoom;
       }
 
+      const urlRoomOnLoad = getRoomFromUrl();
       const savedSession = loadSession();
-      if (savedSession && savedSession.room && savedSession.name) {
-        joinRoom(
-          savedSession.room,
-          savedSession.name,
-          savedSession.isHost,
-          false,
-        );
+
+      if (urlRoomOnLoad && savedSession && savedSession.room === urlRoomOnLoad) {
+        // Same room in URL and saved session — reconnect with known name/host status
+        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
+      } else if (urlRoomOnLoad) {
+        // URL has a room but no matching session — show name entry for that room
+        render();
+      } else if (savedSession && savedSession.room && savedSession.name) {
+        // No URL room, fall back to saved session
+        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
       } else {
         render();
       }
