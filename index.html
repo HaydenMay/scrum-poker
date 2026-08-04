@@ -183,10 +183,7 @@
 
       function saveSession(room, name, isHost) {
         try {
-          localStorage.setItem(
-            SESSION_KEY,
-            JSON.stringify({ room, name, isHost }),
-          );
+          localStorage.setItem(SESSION_KEY, JSON.stringify({ room, name, isHost }));
         } catch (e) {
           console.error("Couldn't save session:", e);
         }
@@ -249,9 +246,7 @@
         updateUrl(state.room);
 
         // Presence: mark this participant as in the room, and auto-remove on disconnect
-        const myParticipantRef = state.roomRef.child(
-          "participants/" + state.name,
-        );
+        const myParticipantRef = state.roomRef.child("participants/" + state.name);
         myParticipantRef.set(true);
         myParticipantRef.onDisconnect().remove();
 
@@ -267,9 +262,7 @@
             state.participants = data.participants || {};
             state.timerEndsAt = data.timerEndsAt || null;
             state.timerPausedRemaining =
-              data.timerPausedRemaining != null
-                ? data.timerPausedRemaining
-                : null;
+              data.timerPausedRemaining != null ? data.timerPausedRemaining : null;
             render();
             if (!wasRevealed && state.revealed && isUnanimous(state.votes)) {
               celebrate();
@@ -376,10 +369,7 @@
       }
 
       function startTimer() {
-        state.roomRef.update({
-          timerEndsAt: Date.now() + 60 * 1000,
-          timerPausedRemaining: null,
-        });
+        state.roomRef.update({ timerEndsAt: Date.now() + 60 * 1000, timerPausedRemaining: null });
       }
 
       function avg() {
@@ -388,6 +378,30 @@
           .filter((v) => !isNaN(v));
         if (!nums.length) return null;
         return (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1);
+      }
+
+      function median() {
+        const nums = Object.values(state.votes)
+          .map((v) => parseFloat(v))
+          .filter((v) => !isNaN(v))
+          .sort((a, b) => a - b);
+        if (!nums.length) return null;
+        const mid = Math.floor(nums.length / 2);
+        const result = nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
+        return Number.isInteger(result) ? String(result) : result.toFixed(1);
+      }
+
+      function mode() {
+        const vals = Object.values(state.votes);
+        if (!vals.length) return null;
+        const counts = {};
+        vals.forEach((v) => {
+          counts[v] = (counts[v] || 0) + 1;
+        });
+        const maxCount = Math.max(...Object.values(counts));
+        if (maxCount < 2) return null; // no repeated value — mode isn't meaningful
+        const modes = Object.keys(counts).filter((k) => counts[k] === maxCount);
+        return modes.join(", ");
       }
 
       function render() {
@@ -487,8 +501,7 @@
         <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Still voting</p>
         ${waitingOn
           .map(
-            (name) =>
-              `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
+            (name) => `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
           )
           .join("")}
       </div>`
@@ -525,16 +538,26 @@
               .join("")
           : `<p style="font-size:13px; color:var(--text-secondary); margin:0;">No one's voted yet.</p>`;
 
-        const avgHtml = state.revealed
+        const statsHtml = state.revealed
           ? isUnanimous(state.votes)
             ? `<div style="background: var(--accent-bg); border-radius:10px; padding:1rem; margin-top:16px; text-align:center;">
         <p style="font-size:13px; color:#9dc0ff; margin:0 0 4px;">Unanimous</p>
         <p style="font-size:24px; font-weight:600; margin:0; color:#9dc0ff;">Everyone said ${Object.values(state.votes)[0]}</p>
       </div>`
             : avg() !== null
-              ? `<div style="background:var(--surface-2); border-radius:10px; padding:1rem; margin-top:16px; text-align:center;">
-        <p class="label" style="margin-bottom:4px;">Average</p>
-        <p style="font-size:24px; font-weight:600; margin:0;">${avg()}</p>
+              ? `<div style="display:flex; gap:8px; margin-top:16px;">
+        <div style="flex:1; background:var(--surface-2); border-radius:10px; padding:0.75rem; text-align:center;">
+          <p class="label" style="margin-bottom:4px;">Average</p>
+          <p style="font-size:20px; font-weight:600; margin:0;">${avg()}</p>
+        </div>
+        <div style="flex:1; background:var(--surface-2); border-radius:10px; padding:0.75rem; text-align:center;">
+          <p class="label" style="margin-bottom:4px;">Median</p>
+          <p style="font-size:20px; font-weight:600; margin:0;">${median() ?? "—"}</p>
+        </div>
+        <div style="flex:1; background:var(--surface-2); border-radius:10px; padding:0.75rem; text-align:center;">
+          <p class="label" style="margin-bottom:4px;">Mode</p>
+          <p style="font-size:20px; font-weight:600; margin:0;">${mode() ?? "—"}</p>
+        </div>
       </div>`
               : ""
           : "";
@@ -574,6 +597,14 @@
     </div>
 
     ${
+      !state.revealed && state.name.trim().toLowerCase() === "john"
+        ? `<div style="text-align:center; margin-bottom:20px;">
+      <button id="lucky-btn" style="font-size:13px; padding:6px 12px;">I'm feeling lucky 🍀</button>
+    </div>`
+        : ""
+    }
+
+    ${
       state.isHost && !state.timerEndsAt && state.timerPausedRemaining == null
         ? `<div style="text-align:center; margin-bottom:20px;">
       <button id="start-timer-btn" style="font-size:13px; padding:6px 12px;">Start 1 min timer</button>
@@ -584,7 +615,7 @@
     <div class="card" style="margin-bottom:16px;">
       <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Votes (${submitted.length})</p>
       ${votesHtml}
-      ${avgHtml}
+      ${statsHtml}
     </div>
 
     ${waitingHtml}
@@ -604,6 +635,13 @@
         });
         if (state.isHost && document.getElementById("start-timer-btn")) {
           document.getElementById("start-timer-btn").onclick = startTimer;
+        }
+        const luckyBtn = document.getElementById("lucky-btn");
+        if (luckyBtn) {
+          luckyBtn.onclick = () => {
+            const randomCard = DECK[Math.floor(Math.random() * DECK.length)];
+            castVote(randomCard);
+          };
         }
         if (state.revealed) {
           document.getElementById("new-round-btn").onclick = resetRound;
@@ -654,29 +692,15 @@
       const urlRoomOnLoad = getRoomFromUrl();
       const savedSession = loadSession();
 
-      if (
-        urlRoomOnLoad &&
-        savedSession &&
-        savedSession.room === urlRoomOnLoad
-      ) {
+      if (urlRoomOnLoad && savedSession && savedSession.room === urlRoomOnLoad) {
         // Same room in URL and saved session — reconnect with known name/host status
-        joinRoom(
-          savedSession.room,
-          savedSession.name,
-          savedSession.isHost,
-          false,
-        );
+        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
       } else if (urlRoomOnLoad) {
         // URL has a room but no matching session — show name entry for that room
         render();
       } else if (savedSession && savedSession.room && savedSession.name) {
         // No URL room, fall back to saved session
-        joinRoom(
-          savedSession.room,
-          savedSession.name,
-          savedSession.isHost,
-          false,
-        );
+        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
       } else {
         render();
       }
