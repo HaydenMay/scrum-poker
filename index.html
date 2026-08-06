@@ -183,7 +183,10 @@
 
       function saveSession(room, name, isHost) {
         try {
-          localStorage.setItem(SESSION_KEY, JSON.stringify({ room, name, isHost }));
+          localStorage.setItem(
+            SESSION_KEY,
+            JSON.stringify({ room, name, isHost }),
+          );
         } catch (e) {
           console.error("Couldn't save session:", e);
         }
@@ -251,7 +254,9 @@
         }
 
         // Presence: mark this participant as in the room, and auto-remove on disconnect
-        const myParticipantRef = state.roomRef.child("participants/" + state.name);
+        const myParticipantRef = state.roomRef.child(
+          "participants/" + state.name,
+        );
         myParticipantRef.set(true);
         myParticipantRef.onDisconnect().remove();
 
@@ -268,7 +273,9 @@
             state.participants = data.participants || {};
             state.timerEndsAt = data.timerEndsAt || null;
             state.timerPausedRemaining =
-              data.timerPausedRemaining != null ? data.timerPausedRemaining : null;
+              data.timerPausedRemaining != null
+                ? data.timerPausedRemaining
+                : null;
             render();
             if (!wasRevealed && state.revealed && isUnanimous(state.votes)) {
               celebrate();
@@ -351,30 +358,20 @@
       });
 
       function notifyTimerStarted() {
-        console.log("[notify debug] visibilityState:", document.visibilityState);
-        console.log("[notify debug] Notification.permission:", window.Notification ? Notification.permission : "no Notification API");
-        if (document.visibilityState !== "hidden") {
-          console.log("[notify debug] skipped: tab not hidden");
+        if (document.visibilityState !== "hidden") return; // don't bug them if they're already looking
+        if (!window.Notification || Notification.permission !== "granted")
           return;
-        }
-        if (!window.Notification || Notification.permission !== "granted") {
-          console.log("[notify debug] skipped: no permission");
-          return;
-        }
         try {
           const n = new Notification("Time to vote!", {
             body: "The estimation timer just started.",
-            tag: "scrum-poker-timer",
+            tag: "scrum-poker-timer-" + Date.now(), // unique per timer start, so each one actually shows
           });
-          console.log("[notify debug] Notification created successfully", n);
           n.onclick = () => {
             window.focus();
             n.close();
           };
-          n.onerror = (e) => console.error("[notify debug] Notification onerror:", e);
-          n.onshow = () => console.log("[notify debug] Notification onshow fired");
         } catch (e) {
-          console.error("[notify debug] Notification threw:", e);
+          console.error("Notification failed:", e);
         }
       }
 
@@ -455,7 +452,8 @@
           .sort((a, b) => a - b);
         if (!nums.length) return null;
         const mid = Math.floor(nums.length / 2);
-        const result = nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
+        const result =
+          nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
         return Number.isInteger(result) ? String(result) : result.toFixed(1);
       }
 
@@ -569,7 +567,8 @@
         <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Still voting</p>
         ${waitingOn
           .map(
-            (name) => `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
+            (name) =>
+              `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
           )
           .join("")}
       </div>`
@@ -703,8 +702,10 @@
           btn.onclick = () => castVote(btn.dataset.val);
         });
         if (state.isHost && document.getElementById("start-timer-30-btn")) {
-          document.getElementById("start-timer-30-btn").onclick = () => startTimer(30);
-          document.getElementById("start-timer-60-btn").onclick = () => startTimer(60);
+          document.getElementById("start-timer-30-btn").onclick = () =>
+            startTimer(30);
+          document.getElementById("start-timer-60-btn").onclick = () =>
+            startTimer(60);
         }
         const luckyBtn = document.getElementById("lucky-btn");
         if (luckyBtn) {
@@ -762,15 +763,29 @@
       const urlRoomOnLoad = getRoomFromUrl();
       const savedSession = loadSession();
 
-      if (urlRoomOnLoad && savedSession && savedSession.room === urlRoomOnLoad) {
+      if (
+        urlRoomOnLoad &&
+        savedSession &&
+        savedSession.room === urlRoomOnLoad
+      ) {
         // Same room in URL and saved session — reconnect with known name/host status
-        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
+        joinRoom(
+          savedSession.room,
+          savedSession.name,
+          savedSession.isHost,
+          false,
+        );
       } else if (urlRoomOnLoad) {
         // URL has a room but no matching session — show name entry for that room
         render();
       } else if (savedSession && savedSession.room && savedSession.name) {
         // No URL room, fall back to saved session
-        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
+        joinRoom(
+          savedSession.room,
+          savedSession.name,
+          savedSession.isHost,
+          false,
+        );
       } else {
         render();
       }
