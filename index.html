@@ -245,6 +245,11 @@
         saveSession(state.room, state.name, state.isHost);
         updateUrl(state.room);
 
+        // Ask once, up front, so it's not tied to an awkward mid-round moment
+        if (window.Notification && Notification.permission === "default") {
+          Notification.requestPermission();
+        }
+
         // Presence: mark this participant as in the room, and auto-remove on disconnect
         const myParticipantRef = state.roomRef.child("participants/" + state.name);
         myParticipantRef.set(true);
@@ -256,6 +261,7 @@
             connectionStatus = "connected";
             const data = snap.val() || {};
             const wasRevealed = state.revealed;
+            const hadTimer = state.timerEndsAt;
             state.votes = data.votes || {};
             state.revealed = !!data.revealed;
             state.myVote = state.votes[state.name] || null;
@@ -266,6 +272,10 @@
             render();
             if (!wasRevealed && state.revealed && isUnanimous(state.votes)) {
               celebrate();
+            }
+            if (!hadTimer && state.timerEndsAt) {
+              flashTabTitle();
+              notifyTimerStarted();
             }
           },
           (err) => {
@@ -311,6 +321,61 @@
         const vals = Object.values(votes);
         if (vals.length < 2) return false;
         return vals.every((v) => v === vals[0]);
+      }
+
+      const ORIGINAL_TITLE = document.title;
+      let titleFlashInterval = null;
+
+      function stopTitleFlash() {
+        if (titleFlashInterval) {
+          clearInterval(titleFlashInterval);
+          titleFlashInterval = null;
+        }
+        document.title = ORIGINAL_TITLE;
+      }
+
+      function flashTabTitle() {
+        if (document.visibilityState !== "hidden") return; // only bug them if they're not looking
+        stopTitleFlash();
+        let showAlert = true;
+        titleFlashInterval = setInterval(() => {
+          document.title = showAlert ? "⏱️ Time to vote!" : ORIGINAL_TITLE;
+          showAlert = !showAlert;
+        }, 1000);
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          stopTitleFlash();
+        }
+      });
+
+      function notifyTimerStarted() {
+        console.log("[notify debug] visibilityState:", document.visibilityState);
+        console.log("[notify debug] Notification.permission:", window.Notification ? Notification.permission : "no Notification API");
+        if (document.visibilityState !== "hidden") {
+          console.log("[notify debug] skipped: tab not hidden");
+          return;
+        }
+        if (!window.Notification || Notification.permission !== "granted") {
+          console.log("[notify debug] skipped: no permission");
+          return;
+        }
+        try {
+          const n = new Notification("Time to vote!", {
+            body: "The estimation timer just started.",
+            tag: "scrum-poker-timer",
+          });
+          console.log("[notify debug] Notification created successfully", n);
+          n.onclick = () => {
+            window.focus();
+            n.close();
+          };
+          n.onerror = (e) => console.error("[notify debug] Notification onerror:", e);
+          n.onshow = () => console.log("[notify debug] Notification onshow fired");
+        } catch (e) {
+          console.error("[notify debug] Notification threw:", e);
+        }
       }
 
       function celebrate() {
@@ -368,8 +433,11 @@
         });
       }
 
-      function startTimer() {
-        state.roomRef.update({ timerEndsAt: Date.now() + 60 * 1000, timerPausedRemaining: null });
+      function startTimer(seconds) {
+        state.roomRef.update({
+          timerEndsAt: Date.now() + seconds * 1000,
+          timerPausedRemaining: null,
+        });
       }
 
       function avg() {
@@ -606,8 +674,9 @@
 
     ${
       state.isHost && !state.timerEndsAt && state.timerPausedRemaining == null
-        ? `<div style="text-align:center; margin-bottom:20px;">
-      <button id="start-timer-btn" style="font-size:13px; padding:6px 12px;">Start 1 min timer</button>
+        ? `<div style="text-align:center; margin-bottom:20px; display:flex; gap:8px; justify-content:center;">
+      <button id="start-timer-30-btn" style="font-size:13px; padding:6px 12px;">Start 30s timer</button>
+      <button id="start-timer-60-btn" style="font-size:13px; padding:6px 12px;">Start 1 min timer</button>
     </div>`
         : ""
     }
@@ -633,8 +702,9 @@
         document.querySelectorAll(".card-btn").forEach((btn) => {
           btn.onclick = () => castVote(btn.dataset.val);
         });
-        if (state.isHost && document.getElementById("start-timer-btn")) {
-          document.getElementById("start-timer-btn").onclick = startTimer;
+        if (state.isHost && document.getElementById("start-timer-30-btn")) {
+          document.getElementById("start-timer-30-btn").onclick = () => startTimer(30);
+          document.getElementById("start-timer-60-btn").onclick = () => startTimer(60);
         }
         const luckyBtn = document.getElementById("lucky-btn");
         if (luckyBtn) {
