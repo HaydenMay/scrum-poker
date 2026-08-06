@@ -159,6 +159,7 @@
         revealed: false,
         roomRef: null,
         participants: {},
+        hostPresent: false,
         timerEndsAt: null,
         timerPausedRemaining: null,
       };
@@ -183,10 +184,7 @@
 
       function saveSession(room, name, isHost) {
         try {
-          localStorage.setItem(
-            SESSION_KEY,
-            JSON.stringify({ room, name, isHost }),
-          );
+          localStorage.setItem(SESSION_KEY, JSON.stringify({ room, name, isHost }));
         } catch (e) {
           console.error("Couldn't save session:", e);
         }
@@ -254,11 +252,17 @@
         }
 
         // Presence: mark this participant as in the room, and auto-remove on disconnect
-        const myParticipantRef = state.roomRef.child(
-          "participants/" + state.name,
-        );
+        const myParticipantRef = state.roomRef.child("participants/" + state.name);
         myParticipantRef.set(true);
         myParticipantRef.onDisconnect().remove();
+
+        // Host presence: only the host writes this, and it auto-clears if they disconnect,
+        // so everyone else can tell whether an active host is currently in the room.
+        if (state.isHost) {
+          const hostPresenceRef = state.roomRef.child("hostPresent");
+          hostPresenceRef.set(true);
+          hostPresenceRef.onDisconnect().remove();
+        }
 
         state.roomRef.on(
           "value",
@@ -271,11 +275,10 @@
             state.revealed = !!data.revealed;
             state.myVote = state.votes[state.name] || null;
             state.participants = data.participants || {};
+            state.hostPresent = !!data.hostPresent;
             state.timerEndsAt = data.timerEndsAt || null;
             state.timerPausedRemaining =
-              data.timerPausedRemaining != null
-                ? data.timerPausedRemaining
-                : null;
+              data.timerPausedRemaining != null ? data.timerPausedRemaining : null;
             render();
             if (!wasRevealed && state.revealed && isUnanimous(state.votes)) {
               celebrate();
@@ -298,6 +301,9 @@
       function leaveRoom() {
         if (state.roomRef) {
           state.roomRef.child("participants/" + state.name).remove();
+          if (state.isHost) {
+            state.roomRef.child("hostPresent").remove();
+          }
           state.roomRef.off();
         }
         clearSession();
@@ -311,6 +317,7 @@
           revealed: false,
           roomRef: null,
           participants: {},
+          hostPresent: false,
           timerEndsAt: null,
           timerPausedRemaining: null,
         };
@@ -359,8 +366,7 @@
 
       function notifyTimerStarted() {
         if (document.visibilityState !== "hidden") return; // don't bug them if they're already looking
-        if (!window.Notification || Notification.permission !== "granted")
-          return;
+        if (!window.Notification || Notification.permission !== "granted") return;
         try {
           const n = new Notification("Time to vote!", {
             body: "The estimation timer just started.",
@@ -431,9 +437,16 @@
       }
 
       function startTimer(seconds) {
-        state.roomRef.update({
-          timerEndsAt: Date.now() + seconds * 1000,
-          timerPausedRemaining: null,
+        state.roomRef.transaction((room) => {
+          if (room && room.timerEndsAt) {
+            // Someone already started a timer — don't clobber it
+            return;
+          }
+          if (room) {
+            room.timerEndsAt = Date.now() + seconds * 1000;
+            room.timerPausedRemaining = null;
+          }
+          return room;
         });
       }
 
@@ -452,8 +465,7 @@
           .sort((a, b) => a - b);
         if (!nums.length) return null;
         const mid = Math.floor(nums.length / 2);
-        const result =
-          nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
+        const result = nums.length % 2 === 0 ? (nums[mid - 1] + nums[mid]) / 2 : nums[mid];
         return Number.isInteger(result) ? String(result) : result.toFixed(1);
       }
 
@@ -567,8 +579,7 @@
         <p style="font-weight:600; font-size:14px; margin:0 0 8px;">Still voting</p>
         ${waitingOn
           .map(
-            (name) =>
-              `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
+            (name) => `<div style="padding:6px 0; font-size:14px; color:var(--text-secondary);">${name}</div>`,
           )
           .join("")}
       </div>`
@@ -672,7 +683,9 @@
     }
 
     ${
-      state.isHost && !state.timerEndsAt && state.timerPausedRemaining == null
+      (state.isHost || !state.hostPresent) &&
+      !state.timerEndsAt &&
+      state.timerPausedRemaining == null
         ? `<div style="text-align:center; margin-bottom:20px; display:flex; gap:8px; justify-content:center;">
       <button id="start-timer-30-btn" style="font-size:13px; padding:6px 12px;">Start 30s timer</button>
       <button id="start-timer-60-btn" style="font-size:13px; padding:6px 12px;">Start 1 min timer</button>
@@ -701,11 +714,9 @@
         document.querySelectorAll(".card-btn").forEach((btn) => {
           btn.onclick = () => castVote(btn.dataset.val);
         });
-        if (state.isHost && document.getElementById("start-timer-30-btn")) {
-          document.getElementById("start-timer-30-btn").onclick = () =>
-            startTimer(30);
-          document.getElementById("start-timer-60-btn").onclick = () =>
-            startTimer(60);
+        if (document.getElementById("start-timer-30-btn")) {
+          document.getElementById("start-timer-30-btn").onclick = () => startTimer(30);
+          document.getElementById("start-timer-60-btn").onclick = () => startTimer(60);
         }
         const luckyBtn = document.getElementById("lucky-btn");
         if (luckyBtn) {
@@ -763,29 +774,15 @@
       const urlRoomOnLoad = getRoomFromUrl();
       const savedSession = loadSession();
 
-      if (
-        urlRoomOnLoad &&
-        savedSession &&
-        savedSession.room === urlRoomOnLoad
-      ) {
+      if (urlRoomOnLoad && savedSession && savedSession.room === urlRoomOnLoad) {
         // Same room in URL and saved session — reconnect with known name/host status
-        joinRoom(
-          savedSession.room,
-          savedSession.name,
-          savedSession.isHost,
-          false,
-        );
+        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
       } else if (urlRoomOnLoad) {
         // URL has a room but no matching session — show name entry for that room
         render();
       } else if (savedSession && savedSession.room && savedSession.name) {
         // No URL room, fall back to saved session
-        joinRoom(
-          savedSession.room,
-          savedSession.name,
-          savedSession.isHost,
-          false,
-        );
+        joinRoom(savedSession.room, savedSession.name, savedSession.isHost, false);
       } else {
         render();
       }
